@@ -1,0 +1,25 @@
+{
+  "name": "rag-survey-2312.10997",
+  "field": "Retrieval-augmented generation for large language models",
+  "brief": {
+    "field": "Computer science, natural language processing",
+    "subfield": "Retrieval-augmented generation (RAG) for LLMs",
+    "topics": "RAG pipelines, retrieval quality, hallucination reduction, RAG vs fine-tuning",
+    "background": "Strong in machine learning and Python; some NLP; no lab compute beyond a single GPU",
+    "advisor_focus": "Knowledge-grounded generation and evaluation",
+    "compute_data": "One 24 GB GPU; public QA and retrieval benchmarks",
+    "timeline": "About 3 years left; wants 2 conference papers",
+    "style": "empirical",
+    "papers_they_like": "arXiv 2312.10997"
+  },
+  "survey_arxiv_id": "2312.10997",
+  "provenance": "Full text of section VII (Discussion and Future Prospects) read via https://arxiv.org/html/2312.10997 with a summarizing fetch tool, so the wording below is paraphrased, not verbatim. arXiv API metadata checked 2026-10-28 (version v5, 2024-03-27).",
+  "known_gaps": [
+    {"id": "g1", "text": "RAG versus long-context LLMs: retrieval still matters for speed, on-demand input and verifiable sourcing as context windows grow"},
+    {"id": "g2", "text": "Robustness of RAG to noisy or contradictory retrieved information and to adversarial inputs"},
+    {"id": "g3", "text": "Hybrid approaches that combine RAG with fine-tuning, including how to sequence or jointly train them"},
+    {"id": "g4", "text": "Scaling laws for RAG are uncertain; smaller RAG models may outperform larger ones"},
+    {"id": "g5", "text": "Production-ready RAG: efficiency, recall at scale and data security remain open engineering problems"},
+    {"id": "g6", "text": "Multi-modal RAG that retrieves over images, audio, video and code"}
+  ]
+}

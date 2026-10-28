@@ -1,0 +1,32 @@
+[package]
+name = "scout"
+version = "0.1.0"
+description = "Scout: PhD research assistant"
+authors = ["Deforge"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+sqlite-vec = "0.1.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json", "stream", "socks"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "process", "io-util", "sync", "fs"] }
+futures-util = "0.3"
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+base64 = "0.22"
+pdf-extract = "0.12.1"
