@@ -69,7 +69,7 @@ interface SourceAdapter {
 (identity: DOI > arXiv ID (version stripped) > normalized title + first-author surname + year), `chunkSections(sections, maxTokens=400)`,
 and `probeAccess(doi, settings): Promise<"FULLTEXT_OK"|"PAYWALL"|"LOGIN_REDIRECT"|"BLOCKED"|"RATE_LIMITED"|"ERROR">`.
 All HTTP via `http()` from rust.ts. arXiv: export.arxiv.org API (Atom, parse with DOMParser), full text from
-`https://arxiv.org/html/<id>` then `https://ar5iv.labs.arxiv.org/html/<id>`, else abstract only. Rate limits live in Rust
+`https://arxiv.org/html/<id>` then `https://ar5iv.labs.arxiv.org/html/<id>`; stage 7 falls back to `https://arxiv.org/pdf/<id>`, else abstract only. Rate limits live in Rust
 (defaults: export.arxiv.org & arxiv.org 3000ms, api.semanticscholar.org 1100ms, api.openalex.org 120ms, publishers 10000ms).
 
 ## Pipeline stages (`packages/agent/src/pipeline/`)

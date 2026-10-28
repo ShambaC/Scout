@@ -152,3 +152,4 @@ src-tauri/target
 src-tauri/gen
 PLAN.md
 .claude
+generated-images

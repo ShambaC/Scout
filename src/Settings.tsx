@@ -69,9 +69,15 @@ function Providers({ d, up }: { d: S; up: Up }) {
 
 const HF = "https://huggingface.co";
 const PICKS = [["Embedding model", "nomic-embed-text-v1.5"], ["Small chat model (T2)", "Qwen2.5-3B-Instruct"]];
-const hfJson = async <T,>(path: string) => {
-  const r = await http({ url: HF + path });
-  if (r.status >= 400) throw new Error(`Hugging Face returned HTTP ${r.status}`);
+const HF_SECRET = "scout-hf";
+// Rust fills the token from the keychain; reqwest drops Authorization when HF redirects to its CDN host
+const hfHeaders = (auth: boolean) => (auth ? { Authorization: `Bearer {{secret:${HF_SECRET}}}` } : undefined);
+const hfError = (status: number) => new Error(status === 401 || status === 403
+  ? `Hugging Face returned HTTP ${status}: the model is gated or private. Accept its license on huggingface.co and save a token with read access.`
+  : `Hugging Face returned HTTP ${status}`);
+const hfJson = async <T,>(path: string, auth: boolean) => {
+  const r = await http({ url: HF + path, headers: hfHeaders(auth) });
+  if (r.status >= 400) throw hfError(r.status);
   return JSON.parse(r.body) as T;
 };
 const mb = (n: number) => (n / 1048576).toFixed(0);
@@ -80,10 +86,12 @@ function Local() {
   const [cfg, setCfg] = useState({ binary: "", model: "", port: 8080, embedding: false }), [st, setSt] = useState<LlamaStatus | null>(null), [dir, setDir] = useState("");
   const [q, setQ] = useState(""), [repos, setRepos] = useState<{ id: string; downloads: number }[]>([]), [repo, setRepo] = useState("");
   const [files, setFiles] = useState<{ path: string; size: number }[]>([]), [dl, setDl] = useState<{ name: string; got: number; total: number | null } | null>(null);
+  const [key, setKey] = useState(""), [hasKey, setHasKey] = useState(false);
   useEffect(() => {
     dbq<{ value_json: string }>("SELECT value_json FROM settings WHERE key = 'llama_ui'").then((r) => r[0] && setCfg((c) => ({ ...c, ...JSON.parse(r[0].value_json) }))).catch(() => {});
     llama.status().then(setSt).catch(() => {});
     appPaths().then((p) => setDir(p.models_dir)).catch(() => {});
+    secrets.exists(HF_SECRET).then(setHasKey).catch(() => setHasKey(false));
   }, []);
   const pick = async (k: "binary" | "model") => { const f = await pickFile({ multiple: false, defaultPath: k === "model" ? dir : undefined }).catch(fail); if (typeof f === "string") setCfg({ ...cfg, [k]: f }); };
   const save = (c: typeof cfg) => dbq("INSERT OR REPLACE INTO settings(key, value_json) VALUES ('llama_ui', ?)", [JSON.stringify(c)]);
@@ -95,11 +103,11 @@ function Local() {
   };
   const search = (text: string) => {
     setQ(text);
-    hfJson<{ id: string; downloads: number }[]>(`/api/models?search=${encodeURIComponent(text)}&filter=gguf&sort=downloads&direction=-1&limit=20`).then(setRepos).catch(fail);
+    hfJson<{ id: string; downloads: number }[]>(`/api/models?search=${encodeURIComponent(text)}&filter=gguf&sort=downloads&direction=-1&limit=20`, hasKey).then(setRepos).catch(fail);
   };
   const openRepo = (id: string) => {
     setRepo(id); setFiles([]);
-    hfJson<{ type: string; path: string; size: number }[]>(`/api/models/${id}/tree/main?recursive=1`)
+    hfJson<{ type: string; path: string; size: number }[]>(`/api/models/${id}/tree/main?recursive=1`, hasKey)
       .then((t) => setFiles(t.filter((f) => f.type === "file" && f.path.endsWith(".gguf")))).catch(fail);
   };
   // shortcut: sharded GGUFs (-0000N-of-0000M) download one shard at a time, pick the single-file quant or merge shards by hand
@@ -107,8 +115,8 @@ function Local() {
     const name = path.split("/").pop()!, save_path = `${dir}/${name}`;
     setDl({ name, got: 0, total: null });
     try {
-      const r = await httpDownload({ url: `${HF}/${repo}/resolve/main/${encodeURI(path)}`, save_path }, (got, total) => setDl({ name, got, total }));
-      if (r.status >= 400) throw new Error(`Download failed (HTTP ${r.status})`);
+      const r = await httpDownload({ url: `${HF}/${repo}/resolve/main/${encodeURI(path)}`, headers: hfHeaders(hasKey), save_path }, (got, total) => setDl({ name, got, total }));
+      if (r.status >= 400) throw hfError(r.status);
       const next = { ...cfg, model: save_path };
       setCfg(next);
       await save(next);
@@ -120,6 +128,11 @@ function Local() {
       <div className="flex gap-2"><Input value={cfg[k]} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })} /><Button onClick={() => pick(k)}>Browse</Button></div></Field>)}
     <Card className="space-y-2 p-3">
       <div className="text-sm font-medium">Download a model from Hugging Face</div>
+      <Field label="Hugging Face token (optional)" hint="A read token raises Hugging Face's rate limits for anonymous users and unlocks gated models you have accepted. Stored in the OS keychain.">
+        <div className="flex items-center gap-2"><Input type="password" autoComplete="off" aria-label="Hugging Face token" placeholder={hasKey ? "replace token" : "hf_..."} value={key} onChange={(e) => setKey(e.target.value)} />
+          <Button disabled={!key} onClick={() => secrets.set(HF_SECRET, key).then(() => { setKey(""); setHasKey(true); }).catch(fail)}>Save token</Button>
+          {hasKey && <><Badge tone="success"><Check size={11} />saved</Badge>
+            <Button variant="ghost" size="icon" aria-label="Remove Hugging Face token" onClick={() => secrets.delete(HF_SECRET).then(() => setHasKey(false)).catch(fail)}><Trash2 size={14} /></Button></>}</div></Field>
       <div className="flex flex-wrap gap-2"><Input aria-label="Search Hugging Face" placeholder="search GGUF models" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && q.trim() && search(q.trim())} />
         <Button disabled={!q.trim()} onClick={() => search(q.trim())}>Search</Button>
         {PICKS.map(([label, text]) => <Button key={text} size="sm" onClick={() => search(text)}>{label}</Button>)}</div>
