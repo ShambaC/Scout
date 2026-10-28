@@ -99,12 +99,14 @@ const mb = (n: number) => (n / 1048576).toFixed(0);
 const gb = (n: number) => (n / 1073741824).toFixed(1);
 // asset suffix per variant (the build number changes every release); `rt` = CUDA runtime archive extracted into the same folder
 const WIN = /windows/i.test(navigator.userAgent);
-const LLAMA_VARIANTS: Record<string, { label: string; suffix: string; rt?: boolean }> = WIN
-  ? { cpu: { label: "CPU", suffix: "-bin-win-cpu-x64.zip" }, vulkan: { label: "Vulkan (any GPU)", suffix: "-bin-win-vulkan-x64.zip" }, cuda: { label: "CUDA 12.4 (NVIDIA)", suffix: "-bin-win-cuda-12.4-x64.zip", rt: true } }
+const LLAMA_VARIANTS: Record<string, { label: string; suffix: string | RegExp; rt?: boolean }> = WIN
+  // any CUDA 13.x minor, since llama.cpp bumps it between builds; CUDA 13 needs NVIDIA driver 580+ and a Turing (RTX 20) or newer GPU
+  ? { cpu: { label: "CPU", suffix: "-bin-win-cpu-x64.zip" }, vulkan: { label: "Vulkan (any GPU)", suffix: "-bin-win-vulkan-x64.zip" }, cuda: { label: "CUDA 13 (NVIDIA RTX 20 or newer)", suffix: /-bin-win-cuda-13\.\d+-x64\.zip$/, rt: true } }
   : { cpu: { label: "CPU", suffix: "-bin-ubuntu-x64.tar.gz" }, vulkan: { label: "Vulkan (any GPU)", suffix: "-bin-ubuntu-vulkan-x64.tar.gz" } };
 type Asset = { name: string; size: number; browser_download_url: string };
 type Release = { tag_name: string; assets: Asset[] };
-const findAsset = (r: Release, suffix: string, prefix: string) => r.assets.find((a) => a.name.startsWith(prefix) && a.name.endsWith(suffix));
+const findAsset = (r: Release, suffix: string | RegExp, prefix: string) =>
+  r.assets.find((a) => a.name.startsWith(prefix) && (typeof suffix === "string" ? a.name.endsWith(suffix) : suffix.test(a.name)));
 type Rec = { repo: string; file: GgufFile };
 type Tree = { type: string; path: string; size: number }[];
 
