@@ -123,7 +123,7 @@ Publisher access is off by default. To use your institution's subscriptions, set
 
 - Each project is one SQLite file: `<app data>/projects/<id>.sqlite`. It holds papers, text chunks with full-text search and vectors (sqlite-vec), findings, gaps, proposals, and an LLM call log. App-wide settings live in `app.sqlite`.
 - The app data folder is the OS default for the identifier `io.deforge.scout`, e.g. `%APPDATA%\io.deforge.scout` on Windows.
-- API keys are stored only in the OS keychain. They are never written to SQLite or logs.
+- API keys are stored only in the OS keychain. They are never written to SQLite or logs. On Linux this is the desktop's Secret Service (GNOME Keyring, KWallet or KeePassXC), so one must be running to save keys.
 - Text you research is sent to the model providers you configure. Use local models if it must not leave your machine.
 
 ## Project layout
