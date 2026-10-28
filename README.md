@@ -9,6 +9,8 @@
 <p align="center">
   <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-4f46e5" />
   <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-orange" />
+  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-blue" /></a>
+  <a href="https://github.com/ShambaC/Scout/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/ShambaC/Scout?include_prereleases" /></a>
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" />
   <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" />
@@ -97,6 +99,10 @@ npm run tauri build
 
 Installers are written to `src-tauri/target/release/bundle/`.
 
+### Releases
+
+Publishing a GitHub release runs [.github/workflows/release.yml](.github/workflows/release.yml). It builds Windows (`.msi`, `-setup.exe`) and Linux (`.deb`, `.rpm`, `.AppImage`) installers and attaches them to the release. The app version is taken from the release tag (`v1.2.3` becomes `1.2.3`), so use a semver tag.
+
 ### First run
 
 1. Open **Settings**. Add API keys (stored in the OS keychain) or configure a local model.
@@ -155,3 +161,7 @@ npm run eval -- <project.sqlite> packages/eval/gold/<name>.json
 ## Built with
 
 Tauri 2, React 18, TypeScript, Tailwind CSS 4, zod, SQLite (rusqlite, FTS5, sqlite-vec), reqwest, keyring, pdf-extract, docx.
+
+## License
+
+GNU General Public License v3.0. See [LICENSE](LICENSE).
