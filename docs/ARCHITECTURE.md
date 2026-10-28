@@ -26,6 +26,8 @@ with `JSON.stringify(vec)`.
 | `packages/agent/src/session.ts` | UI-facing controller (signatures fixed) |
 | `packages/agent/src/settings.ts` | `DEFAULT_SETTINGS`, `loadSettings(): Promise<Settings>`, `saveSettings(s: Settings): Promise<void>` (also pushes `network` to Rust via `network.setConfig`), `onSettings(cb)` |
 | `packages/agent/src/providers/*.ts` | `openai_compat` (OpenAI, OpenRouter, Together, llama-server, Ollama /v1), `anthropic`, `cli_bridge` (experimental). `index.ts`: `getProvider(cfg: ProviderConfig, settings: Settings): LlmProvider` |
+| `packages/agent/src/providers/presets.ts` | API-key provider presets |
+| `packages/agent/src/providers/oauth.ts` + `src-tauri/src/oauth.rs` | subscription sign-in: Rust does login/refresh/keychain, TS gets `{{secret:...}}` templates via `oauth_ensure` |
 | `packages/agent/src/prompts.ts` | `loadPrompt(name): string` from `packages/agent/prompts/*.md` via `import.meta.glob(..., { query: "?raw", eager: true })` |
 | `packages/agent/src/router.ts` | see below |
 | `packages/agent/src/vectors.ts` | `VectorStore` (sqlite-vec impl): `ensure(projectId, name, dim)`, `upsert(projectId, name, rows: {rowid:number, vector:number[]}[])`, `knn(projectId, name, vector, k): Promise<{rowid:number, distance:number}[]>` |

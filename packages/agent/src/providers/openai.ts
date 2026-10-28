@@ -52,13 +52,20 @@ export const costFn = (cfg: ProviderConfig) => (model: string, tin: number, tout
   return p ? (tin * p.in + tout * p.out) / 1e6 : 0;
 };
 
+/** Key header for cfg (see ProviderConfig.auth_header); empty without a secret, so keyless local engines send no auth. */
+export function authHeaders(cfg: ProviderConfig, dflt: string): Record<string, string> {
+  if (!cfg.secret_name) return {};
+  const h = (cfg.auth_header || dflt).toLowerCase(), s = `{{secret:${cfg.secret_name}}}`;
+  return { [h]: h.endsWith("authorization") ? `Bearer ${s}` : s };
+}
+
 export const approxTokens = (s: string) => Math.ceil(s.length / 4);
 
 /** OpenAI, OpenRouter, Together, llama-server, Ollama (/v1). */
 export function openaiProvider(cfg: ProviderConfig): LlmProvider {
   const base = (cfg.base_url ?? "").replace(/\/$/, "");
   const native = base.startsWith("https://api.openai.com");
-  const headers: Record<string, string> = cfg.secret_name ? { authorization: `Bearer {{secret:${cfg.secret_name}}}` } : {};
+  const headers = authHeaders(cfg, "authorization");
   return {
     id: cfg.id,
     kind: cfg.kind,

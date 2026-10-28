@@ -25,9 +25,16 @@ tauri-plugin-dialog = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 sqlite-vec = "0.1.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json", "stream", "socks"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "process", "io-util", "sync", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "process", "io-util", "sync", "fs", "net"] }
 futures-util = "0.3"
 # linux: kernel keyutils is only a cache that is cleared on reboot; Secret Service (GNOME Keyring, KWallet, KeePassXC) persists
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
 base64 = "0.22"
 pdf-extract = "0.12.1"
+tauri-plugin-opener = "2"
+sha2 = "0.10"
+rand = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+# already in the lock file via tauri (0.62.2)
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_System_SystemInformation"] }

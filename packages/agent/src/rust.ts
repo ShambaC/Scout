@@ -50,6 +50,10 @@ export interface NetworkConfig {
   /** e.g. "http://host:8080" or "socks5://host:1080"; empty = direct (or system if use_system_proxy). */
   proxy_url: string;
   use_system_proxy: boolean;
+  /** Proxy username; the password is only in the keychain entry `scout-proxy`. */
+  proxy_user: string;
+  /** Comma-separated hosts/suffixes/CIDRs that bypass the proxy. */
+  no_proxy: string;
   /** domain suffix -> proxy url ("" = direct) */
   per_domain_proxy: Record<string, string>;
   /** domain suffix -> min interval between requests in ms. Intervals >= 1000 also force concurrency 1. */
@@ -107,3 +111,29 @@ export function httpDownload(req: HttpRequest & { save_path: string }, onProgres
 
 /** Extracts plain text per page from a local PDF (pure-Rust parser). */
 export const pdfText = (path: string) => invoke<string[]>("pdf_text", { path });
+
+export interface GpuInfo { gpus: { name: string; vendor: "nvidia" | "amd" | "intel" | "other"; vram_bytes: number }[]; ram_bytes: number }
+export const gpuInfo = () => invoke<GpuInfo>("gpu_info");
+
+/** Unpacks a .zip/.tar.gz with the OS tar and deletes the archive. Returns the llama-server binary path if the archive held one. */
+export const extractArchive = (archive: string, dest: string) => invoke<string | null>("extract_archive", { archive, dest });
+
+/** "Sign in with ChatGPT" (Rust owns the tokens; see src-tauri/src/oauth.rs). */
+export type OAuthProviderId = "openai-codex";
+export type OAuthEvent = { kind: "browser"; url: string };
+export interface OAuthStatus { signed_in: boolean; expires_at: number | null; account: string | null; registered: boolean }
+/** `bearer` is a `{{secret:..}}` template for the Authorization value, resolved in Rust. */
+export interface OAuthEnsured { expires_at: number; bearer: string }
+export const oauth = {
+  login(provider: OAuthProviderId, onEvent: (e: OAuthEvent) => void) {
+    const ch = new Channel<OAuthEvent>();
+    ch.onmessage = onEvent;
+    return invoke<OAuthStatus>("oauth_login", { provider, onEvent: ch });
+  },
+  cancel: (provider: OAuthProviderId) => invoke<void>("oauth_cancel", { provider }),
+  /** Refreshes when expired or within 5 minutes of expiry. Call before every request. */
+  ensure: (provider: OAuthProviderId) => invoke<OAuthEnsured>("oauth_ensure", { provider }),
+  status: (provider: OAuthProviderId) => invoke<OAuthStatus>("oauth_status", { provider }),
+  /** Revokes the refresh token and clears the tokens. Resolves to whether OpenAI confirmed the revocation; `forget` also drops the registered client (to switch ChatGPT account). */
+  logout: (provider: OAuthProviderId, forget = false) => invoke<boolean>("oauth_logout", { provider, forget }),
+};

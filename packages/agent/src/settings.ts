@@ -32,6 +32,10 @@ export const DEFAULT_SETTINGS: Settings = {
   network: {
     proxy_url: "",
     use_system_proxy: false,
+    // Rust ignores this; it only remembers "Manual" while the fields are incomplete. Older saves derive it in loadSettings.
+    proxy_mode: "direct",
+    proxy_user: "",
+    no_proxy: "localhost,127.0.0.1,::1", // local llama-server/Ollama share the HTTP layer
     per_domain_proxy: {},
     rate_limits_ms: {
       // one key so every *.arxiv.org host shares a single 3s budget (arXiv API etiquette)
@@ -70,7 +74,9 @@ export function onSettings(cb: (s: Settings) => void): () => void {
 export async function loadSettings(): Promise<Settings> {
   const rows = await db.query<{ key: string; value_json: string }>("app", "SELECT key, value_json FROM settings");
   const stored = Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value_json)]));
-  return merge(DEFAULT_SETTINGS, stored);
+  const s = merge(DEFAULT_SETTINGS, stored), n = s.network;
+  if (!stored.network?.proxy_mode) n.proxy_mode = n.use_system_proxy ? "system" : n.proxy_url ? "manual" : "direct";
+  return s;
 }
 
 export async function saveSettings(s: Settings): Promise<void> {

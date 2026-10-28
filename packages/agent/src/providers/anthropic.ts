@@ -1,5 +1,5 @@
 import type { ChatRequest, ChatResponse, LlmProvider, ProviderConfig } from "../types";
-import { costFn, postJson, postStream, sseParser } from "./openai";
+import { authHeaders, costFn, postJson, postStream, sseParser } from "./openai";
 
 /** Anthropic SSE: text_delta chunks, input tokens from message_start, output tokens and stop_reason from message_delta. */
 export function anthropicSse(onDelta: (text: string) => void) {
@@ -25,7 +25,8 @@ const payload = (req: ChatRequest): Record<string, any> => ({
 });
 
 export function anthropicProvider(cfg: ProviderConfig): LlmProvider {
-  const headers = { "x-api-key": `{{secret:${cfg.secret_name}}}`, "anthropic-version": "2026-10-21" };
+  const headers = { ...authHeaders(cfg, "x-api-key"), "anthropic-version": "2026-10-21" };
+  const url = `${(cfg.base_url || "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`;
   return {
     id: cfg.id,
     kind: "anthropic",
@@ -34,7 +35,7 @@ export function anthropicProvider(cfg: ProviderConfig): LlmProvider {
     async chat(req: ChatRequest): Promise<ChatResponse> {
       const body = payload(req);
       if (req.json_schema) body.output_config = { format: { type: "json_schema", schema: req.json_schema } };
-      const j = await postJson("https://api.anthropic.com/v1/messages", headers, body);
+      const j = await postJson(url, headers, body);
       if (j.stop_reason === "refusal") throw new Error(`${req.model} refused the request`);
       return {
         text: (j.content as { type: string; text?: string }[]).filter((b) => b.type === "text").map((b) => b.text).join(""),
@@ -44,7 +45,7 @@ export function anthropicProvider(cfg: ProviderConfig): LlmProvider {
     },
     async chatStream(req, onDelta) {
       const p = anthropicSse(onDelta);
-      await postStream("https://api.anthropic.com/v1/messages", headers, { ...payload(req), stream: true }, p.feed);
+      await postStream(url, headers, { ...payload(req), stream: true }, p.feed);
       return p.end();
     },
   };

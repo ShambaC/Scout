@@ -5,11 +5,16 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 use tokio::io::AsyncWriteExt;
 
+// local llama-server / Ollama go through this layer and must never use a proxy
+const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1";
+
 #[derive(Deserialize, Clone)]
 #[serde(default)]
 pub struct NetworkConfig {
     proxy_url: String,
     use_system_proxy: bool,
+    proxy_user: String, // password lives in the keychain entry `scout-proxy`, never here
+    no_proxy: String,
     per_domain_proxy: HashMap<String, String>,
     rate_limits_ms: HashMap<String, u64>,
     daily_caps: HashMap<String, u64>,
@@ -26,6 +31,8 @@ impl Default for NetworkConfig {
         NetworkConfig {
             proxy_url: String::new(),
             use_system_proxy: false,
+            proxy_user: String::new(),
+            no_proxy: DEFAULT_NO_PROXY.into(),
             per_domain_proxy: HashMap::new(),
             rate_limits_ms: rl.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             daily_caps: HashMap::new(),
@@ -93,20 +100,41 @@ fn fill_secrets(v: &str) -> Result<String, String> {
     Ok(out)
 }
 
+fn is_local(host: &str) -> bool {
+    let h = host.trim_matches(['[', ']']);
+    h == "localhost" || h.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Cache key: proxy + auth identity + bypass list. Never the password: `set_network_config` drops the cache instead.
+fn client_key(proxy: &Option<String>, system: bool, user: &str, no_proxy: &str) -> String {
+    match (proxy, system) {
+        (Some(p), _) => format!("{p}|{user}|{no_proxy}"),
+        (None, true) => "<system>".into(),
+        (None, false) => "<direct>".into(),
+    }
+}
+
 impl Net {
-    fn client(&self, proxy: &Option<String>, system: bool) -> Result<reqwest::Client, String> {
-        let key = match (proxy, system) {
-            (Some(p), _) => p.clone(),
-            (None, true) => "<system>".into(),
-            (None, false) => "<direct>".into(),
-        };
+    fn client(&self, cfg: &NetworkConfig, proxy: &Option<String>, system: bool) -> Result<reqwest::Client, String> {
+        // credentials only for the global proxy, not per-domain ones
+        let auth = !cfg.proxy_user.is_empty() && proxy.as_deref() == Some(cfg.proxy_url.as_str());
+        let key = client_key(proxy, system, if auth { &cfg.proxy_user } else { "" }, &cfg.no_proxy);
         let mut m = self.clients.lock().unwrap();
         if let Some(c) = m.get(&key) {
             return Ok(c.clone());
         }
         let mut b = reqwest::Client::builder().connect_timeout(Duration::from_secs(30));
         if let Some(p) = proxy {
-            b = b.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
+            let mut px = reqwest::Proxy::all(p).map_err(|e| e.to_string())?.no_proxy(reqwest::NoProxy::from_string(&cfg.no_proxy));
+            if auth {
+                let pass = match crate::sys::secret_entry("scout-proxy")?.get_password() {
+                    Ok(p) => p,
+                    Err(keyring::Error::NoEntry) => String::new(),
+                    Err(e) => return Err(format!("proxy password: {e}")),
+                };
+                px = px.basic_auth(&cfg.proxy_user, &pass);
+            }
+            b = b.proxy(px);
         } else if !system {
             b = b.no_proxy();
         }
@@ -137,12 +165,26 @@ impl Net {
 #[tauri::command]
 pub fn set_network_config(net: State<Net>, config: NetworkConfig) {
     *net.config.lock().unwrap() = config;
+    net.clients.lock().unwrap().clear(); // a changed keychain password must rebuild the clients
 }
 
 fn retry_delay(h: &reqwest::header::HeaderMap, attempt: u32) -> Duration {
     // shortcut: Retry-After HTTP-date form ignored (falls back to backoff), upgrade if a source uses it
     let ra = h.get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
     Duration::from_secs(ra.unwrap_or(1 << attempt.min(5)).min(120))
+}
+
+/// reqwest's Display hides the cause ("error sending request"); append the source chain (refused, DNS, proxy 407...).
+fn explain(e: reqwest::Error) -> String {
+    let e = e.without_url();
+    let mut out = e.to_string();
+    let mut src = std::error::Error::source(&e);
+    while let Some(s) = src {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+    out
 }
 
 type Progress = Channel<(u64, Option<u64>)>;
@@ -174,11 +216,14 @@ async fn send(app: &AppHandle, net: &Net, req: &HttpRequest, whole: bool) -> Res
         }
     }
 
+    let local = is_local(&host);
     let proxy = match suffix_match(&cfg.per_domain_proxy, &host) {
+        _ if local => None,
         Some((_, p)) => (!p.is_empty()).then(|| p.clone()),
         None => (!cfg.proxy_url.is_empty()).then(|| cfg.proxy_url.clone()),
     };
-    let client = net.client(&proxy, cfg.use_system_proxy)?;
+    // shortcut: system mode reads env/OS proxy only (no PAC/WPAD) and ignores no_proxy; add a PAC resolver if institutes need it
+    let client = net.client(&cfg, &proxy, cfg.use_system_proxy && !local)?;
     let method = reqwest::Method::from_bytes(req.method.as_deref().unwrap_or("GET").as_bytes()).map_err(|e| e.to_string())?;
     let timeout = req.timeout();
     let retries = req.retries.unwrap_or(3);
@@ -205,7 +250,7 @@ async fn send(app: &AppHandle, net: &Net, req: &HttpRequest, whole: bool) -> Res
             let sent = tokio::time::timeout(timeout, rb.send())
                 .await
                 .map_err(|_| "timed out waiting for response".to_string())
-                .and_then(|r| r.map_err(|e| e.without_url().to_string()));
+                .and_then(|r| r.map_err(explain));
             match sent {
                 Ok(resp) => {
                     let s = resp.status().as_u16();
@@ -340,7 +385,31 @@ async fn finish(resp: reqwest::Response, sink: Body<'_>) -> Result<HttpResponse,
 
 #[cfg(test)]
 mod tests {
-    use super::take_utf8;
+    use super::{client_key, is_local, take_utf8, NetworkConfig};
+
+    #[test]
+    fn loopback_never_proxied() {
+        for h in ["localhost", "127.0.0.1", "[::1]", "::1", "127.0.0.2"] {
+            assert!(is_local(h), "{h}");
+        }
+        assert!(!is_local("api.openalex.org") && !is_local("10.0.0.1"));
+    }
+
+    #[test]
+    fn client_key_tracks_identity_and_bypass() {
+        let p = Some("http://h:8080".to_string());
+        let (a, b) = (client_key(&p, false, "alice", "x"), client_key(&p, false, "bob", "x"));
+        assert_ne!(a, b);
+        assert_ne!(a, client_key(&p, false, "alice", "y"));
+        assert_eq!(client_key(&None, true, "alice", "x"), "<system>");
+    }
+
+    #[test]
+    fn old_config_gets_local_bypass() {
+        let c: NetworkConfig = serde_json::from_str(r#"{"proxy_url":"http://h:1","use_system_proxy":false}"#).unwrap();
+        assert_eq!(c.no_proxy, "localhost,127.0.0.1,::1");
+        assert!(c.proxy_user.is_empty());
+    }
 
     #[test]
     fn utf8_split_across_chunks() {

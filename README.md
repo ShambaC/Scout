@@ -70,9 +70,25 @@ Scout routes each task to a tier, so cheap models do bulk work and the strongest
 
 Every tier can point at a pool of providers. Supported providers:
 
-- **Anthropic** API
-- **OpenAI-compatible** APIs: OpenAI, OpenRouter, Ollama, or a local **llama-server**. Under **Settings > Local models** you can search Hugging Face for GGUF models, download them with progress, and start or stop llama-server, including in embedding mode. An optional Hugging Face token (kept in the OS keychain) raises Hugging Face's rate limits and lets you download gated models whose license you have accepted.
-- **CLI bridges** (experimental, off by default): use your own signed-in `claude` (Claude Code) or `codex` (Codex CLI) as a provider. Scout only runs the CLI as a subprocess from a neutral temp folder, with tools disabled. It never reads, copies or proxies the CLIs' login tokens. Check each provider's terms before turning this on; see [docs/provider-policy.md](docs/provider-policy.md).
+- **API-key providers** (73 presets under **Settings > Providers > Add provider**):
+  - major APIs: Anthropic, OpenAI, Google Gemini, Mistral, xAI and others
+  - gateways and routers, such as OpenRouter, Vercel and Cloudflare
+  - inference hosts, such as Groq, Together, Fireworks and DeepInfra
+  - regional providers, coding-plan keys, and Azure, Snowflake and Bedrock Mantle
+  - a custom option for any other OpenAI-compatible endpoint
+- **ChatGPT plan** (**Settings > Subscription sign-in**, "Continue with ChatGPT"):
+  - Uses OpenAI's official [Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source).
+  - Scout registers itself as "Scout" on your first sign-in. Requests go to `api.openai.com/v1/responses` and count against your ChatGPT plan.
+  - Tokens stay in the OS keychain and refresh automatically.
+  - Manage usage at [ChatGPT Settings > Usage](https://chatgpt.com/settings/usage).
+  - Claude Pro/Max sign-in is not offered; use the `claude` CLI bridge instead.
+- **Local models** (**Settings > Local models**):
+  - **llama.cpp:** download `llama-server` in the CPU, Vulkan or CUDA build. Scout preselects the build for your GPU.
+  - **Model picks:** Scout reads your GPU's VRAM and recommends the largest Hugging Face GGUF files that fit.
+  - **Hugging Face:** search for and download any GGUF model. An optional Hugging Face token, kept in the OS keychain with a Check button, raises the download rate limit and unlocks gated models.
+  - **Server:** start or stop llama-server, including in embedding mode.
+  - **Ollama, LM Studio and vLLM** work as presets.
+- **CLI bridges** (experimental, off by default): use your own signed-in `claude` (Claude Code) or `codex` (Codex CLI) as a provider. Scout only runs the CLI as a subprocess from a neutral temp folder, with tools disabled. It never reads, copies or proxies the CLIs' login tokens.
 
 Output from every model is validated against a schema; failures retry once and then escalate to the next tier up. Responses are cached, every call is logged with its token count and cost, and a hard per-run budget stops the pipeline before it overspends.
 
@@ -82,7 +98,11 @@ Output from every model is validated against a schema; failures retry once and t
 
 - Node.js 22 or newer
 - Rust (stable) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS (on Windows: WebView2 and the MSVC build tools)
-- An API key for at least one provider, a local llama-server, or a signed-in `claude`/`codex` CLI
+- At least one model source:
+  - an API key
+  - a subscription sign-in
+  - a local llama-server, which Scout can download for you
+  - a signed-in `claude` or `codex` CLI
 
 ### Develop
 
@@ -113,7 +133,11 @@ Publishing a GitHub release runs [.github/workflows/release.yml](.github/workflo
 
 All network traffic goes through one HTTP layer in the Rust core, which applies:
 
-- proxy settings (system, global, or per domain)
+- a proxy, set to direct, the system proxy, or a manual HTTP, HTTPS, SOCKS5 or SOCKS5h proxy:
+  - optional username, with the password kept in the OS keychain
+  - a bypass list and per-domain overrides
+  - a **Test connection** button
+  - `localhost` traffic, such as llama-server and Ollama, never goes through the proxy
 - per-domain rate limits. All of `*.arxiv.org` shares one 3-second budget, following arXiv's API terms.
 - daily caps for publisher sites, plus retries with backoff
 
@@ -164,4 +188,4 @@ Tauri 2, React 18, TypeScript, Tailwind CSS 4, zod, SQLite (rusqlite, FTS5, sqli
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+GNU General Public License v3.0. See [LICENSE](LICENSE). Code ported from other projects keeps its original license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

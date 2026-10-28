@@ -39,16 +39,20 @@ export type ThreadItem =
 export interface CostEstimate { tokens_in: number; tokens_out: number; cost: number; calls: number; note?: string }
 
 // ---------- Settings (stored in app DB `settings` table, one row per key) ----------
-export type ProviderKind = "openai_compat" | "anthropic" | "llama_local" | "cli_bridge";
+export type ProviderKind = "openai_compat" | "anthropic" | "llama_local" | "cli_bridge" | "oauth";
 export interface ProviderConfig {
   id: string; // user-chosen unique id, e.g. "openai", "openrouter", "local"
   kind: ProviderKind;
   label: string;
-  base_url?: string; // openai_compat / llama_local; e.g. https://api.openai.com/v1
+  base_url?: string; // openai_compat / llama_local: Chat Completions root, e.g. https://api.openai.com/v1; anthropic: https://api.anthropic.com (/v1/messages is appended)
+  /** Header carrying the key when not the default (`Authorization` for openai_compat, `x-api-key` for anthropic). Names ending in `authorization` get a `Bearer ` prefix; others (e.g. Azure `api-key`) get the raw key. */
+  auth_header?: string;
   /** Keychain entry name holding the API key (never the key itself). */
   secret_name?: string;
   /** cli_bridge only: "claude" | "codex" */
   cli?: "claude" | "codex";
+  /** oauth only: which subscription sign-in (tokens live in the OS keychain, managed by Rust). */
+  oauth?: import("./rust").OAuthProviderId;
   max_concurrency?: number;
   /** USD per 1M tokens, keyed by model id. */
   prices?: Record<string, { in: number; out: number }>;
@@ -63,7 +67,7 @@ export interface Settings {
   providers: ProviderConfig[];
   tiers: TierMap;
   budget: BudgetSettings;
-  network: import("./rust").NetworkConfig & { ezproxy_template: string; publisher_access_enabled: boolean; first_use_notice_ack: boolean };
+  network: import("./rust").NetworkConfig & { proxy_mode: "direct" | "system" | "manual"; ezproxy_template: string; publisher_access_enabled: boolean; first_use_notice_ack: boolean };
   sources: { arxiv: boolean; openalex: boolean; s2: boolean; crossref: boolean; unpaywall: boolean; s2_secret_name?: string; contact_email: string };
   experimental: { cli_bridges: boolean; cli_bridge_warning_ack: boolean };
   appearance: { theme: "system" | "light" | "dark"; density: "comfortable" | "compact" };
