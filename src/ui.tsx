@@ -11,7 +11,7 @@ const variants = {
   danger: "bg-danger text-bg hover:opacity-90 font-medium",
 };
 export function Button({ variant = "outline", size = "md", className, ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof variants; size?: "sm" | "md" | "icon" }) {
-  return <button type="button" {...p} className={cn("inline-flex items-center justify-center gap-1.5 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer",
+  return <button type="button" {...p} className={cn("inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg text-sm transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer",
     size === "sm" ? "h-7 px-2.5 text-xs" : size === "icon" ? "h-8 w-8" : "h-9 px-3.5", variants[variant], className)} />;
 }
 

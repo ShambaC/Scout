@@ -35,7 +35,7 @@ function Activity({ it }: { it: Item<"activity_card"> }) {
     {open && <div className="space-y-2 border-t border-border px-3 py-2 text-xs text-muted">
       <div className="flex flex-wrap items-center gap-1.5"><Badge>{it.stage}</Badge>{it.models?.map((m) => <Badge key={m} className="font-mono"><Cpu size={10} />{m}</Badge>)}
         <span className="font-mono">{it.tokens_in} in / {it.tokens_out} out</span></div>
-      {it.details?.length ? <ul className="space-y-0.5 font-mono">{it.details.map((d, i) => <li key={i}><Cited text={d} /></li>)}</ul> : null}
+      {it.details?.length ? <ul className="min-w-0 space-y-0.5 font-mono break-all">{it.details.map((d, i) => <li key={i}><Cited text={d} /></li>)}</ul> : null}
     </div>}
   </Card>;
 }

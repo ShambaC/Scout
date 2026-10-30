@@ -8,7 +8,6 @@ import { Badge, Button, Card, Modal } from "./ui";
 
 type Up = (f: (d: S) => void) => void;
 const ID = "openai-codex" as const, WELCOMED = "scout.chatgpt-plan-welcomed";
-const when = (ms: number) => `expires ${new Date(ms).toLocaleString()}`;
 const seen = () => { try { return !!localStorage.getItem(WELCOMED); } catch { return true; } };
 
 /** Sign in with ChatGPT: tokens are kept by the Rust core in the OS keychain; this only shows status and adds the provider entry. */
@@ -36,11 +35,12 @@ export default function Logins({ d, up }: { d: S; up: Up }) {
   return <div className="mt-6 space-y-3">
     <h3 className="text-sm font-medium">Sign in with ChatGPT</h3>
     <Card className="space-y-2 p-3">
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1"><div className="text-sm font-medium">Use your ChatGPT plan</div>
-          <div className="text-[11px] text-muted">Complete eligible AI requests in Scout with usage included in your ChatGPT plan or credits balance. Scout adds no charge of its own. Tokens stay in the OS keychain and are never shown.</div></div>
-        {signedIn && <Badge tone="success"><Check size={11} />Using ChatGPT plan{st?.account ? `: ${st.account}` : ""}</Badge>}
-        {signedIn && st?.expires_at != null && <span className="text-[11px] text-muted">{when(st.expires_at)}</span>}
+      <div><div className="text-sm font-medium">Use your ChatGPT plan</div>
+        <div className="text-[11px] text-muted">Complete eligible AI requests in Scout with usage included in your ChatGPT plan or credits balance. Scout adds no charge of its own. Tokens stay in the OS keychain and are never shown.</div></div>
+      <div className="flex flex-wrap items-center gap-2">
+        {signedIn && <Badge tone="success" className="min-w-0 max-w-full"><Check size={11} className="shrink-0" /><span className="truncate" title={st?.account ?? undefined}>Using ChatGPT plan{st?.account ? `: ${st.account}` : ""}</span></Badge>}
+        {/* access tokens last 1 h and are renewed on use; the 30-day refresh token resets on each renewal */}
+        {signedIn && <span className="text-[11px] text-muted">Renews automatically. Sign in again only after 30 days without use.</span>}
         {signedIn && !added && <Button size="sm" onClick={add}>Add as provider</Button>}
         {signedIn && added && <Badge tone="accent">in providers</Badge>}
         {busy ? <Button size="sm" onClick={() => { cancelled.current = true; oauth.cancel(ID).catch(fail); }}>Cancel</Button>

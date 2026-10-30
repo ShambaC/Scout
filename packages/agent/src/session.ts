@@ -113,6 +113,7 @@ async function job(s: S, fn: (ctx: RunCtx) => Promise<void>, pipeline = false): 
   } catch (e) {
     if (ac.signal.aborted) out = "stopped";
     else if (e instanceof BudgetExceededError) say(s, `Budget cap reached ($${s.settings?.budget.per_run_usd}). Use /budget <usd> to raise it, then /run.`);
+    else if (pipeline) say(s, `Something went wrong: ${(e as Error)?.message ?? e}\n\nFix the cause, then press /run or send any message to resume from this step.`, ["/run"]);
     else say(s, `Something went wrong: ${(e as Error)?.message ?? e}`);
   } finally {
     if (out === "stopped") say(s, "Stopped.");
@@ -168,7 +169,7 @@ export async function sendUserMessage(projectId: string, sessionId: string, text
   }
   if (text.trim().startsWith("/")) {
     try { await command(s, text.trim()); } catch (e) { say(s, `Error: ${(e as Error)?.message ?? e}`); }
-  } else if (!s.running && !(await db.query(projectId, "SELECT 1 FROM papers WHERE relevance IS NOT NULL LIMIT 1")).length) startPipeline(s); // stages are idempotent, so this resumes where it stopped
+  } else if (!s.running && (s.end === "error" || !(await db.query(projectId, "SELECT 1 FROM papers WHERE relevance IS NOT NULL LIMIT 1")).length)) startPipeline(s); // stages are idempotent, so this resumes where it stopped
   else void job(s, (ctx) => answerQuestion(ctx, text.trim()));
 }
 

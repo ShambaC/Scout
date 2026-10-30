@@ -367,9 +367,88 @@ pub async fn extract_archive(archive: String, dest: String) -> Result<Option<Str
     Ok(find_file(std::path::Path::new(&dest), bin).map(|p| p.to_string_lossy().into_owned()))
 }
 
+// ---- downloaded-model files ----
+
+#[derive(Serialize)]
+pub struct DirEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    modified_ms: u64,
+}
+
+/// Canonical `path` if it lies inside one of `roots` (canonicalizing resolves `..` and symlinks, so neither can escape).
+/// The root itself only passes with `allow_root`, so a delete can never take the whole folder.
+fn guard(roots: &[PathBuf], path: &str, allow_root: bool) -> Result<PathBuf, String> {
+    let p = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+    let ok = roots.iter().filter_map(|r| std::fs::canonicalize(r).ok()).any(|r| p.starts_with(&r) && (allow_root || p != r));
+    if ok { Ok(p) } else { Err(format!("path is outside the models folders: {path}")) }
+}
+
+fn model_roots(p: &AppPaths) -> [PathBuf; 2] {
+    [p.models_dir.clone(), p.data_dir.join("llama.cpp")]
+}
+
+/// Total bytes of the files under `p`; symlinks are not followed.
+fn tree_size(p: &std::path::Path) -> u64 {
+    std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| match e.file_type() {
+        Ok(t) if t.is_dir() => tree_size(&e.path()),
+        Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+        _ => 0,
+    }).sum()
+}
+
+#[tauri::command(async)]
+pub fn list_dir(paths: State<AppPaths>, path: String) -> Result<Vec<DirEntry>, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Ok(vec![]); // e.g. llama.cpp/ before the first download
+    }
+    let dir = guard(&model_roots(&paths), &path, true)?;
+    let mut out = vec![];
+    for e in std::fs::read_dir(dir).map_err(err)?.flatten() {
+        let (Ok(t), Ok(m)) = (e.file_type(), e.metadata()) else { continue };
+        let is_dir = t.is_dir();
+        let modified_ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
+        out.push(DirEntry { name: e.file_name().to_string_lossy().into_owned(), path: e.path().to_string_lossy().into_owned(), is_dir, size: if is_dir { tree_size(&e.path()) } else { m.len() }, modified_ms });
+    }
+    Ok(out)
+}
+
+#[tauri::command(async)]
+pub fn delete_path(paths: State<AppPaths>, path: String) -> Result<(), String> {
+    let p = guard(&model_roots(&paths), &path, false)?;
+    if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }.map_err(err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_keeps_paths_inside_roots() {
+        let base = std::env::temp_dir().join(format!("scout-guard-{}", std::process::id()));
+        let (root, other) = (base.join("models"), base.join("other"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(root.join("a.gguf"), "x").unwrap();
+        std::fs::write(other.join("secret"), "x").unwrap();
+        let roots = [root.clone()];
+        let s = |p: &PathBuf| p.to_string_lossy().into_owned();
+        assert!(guard(&roots, &s(&root.join("a.gguf")), false).is_ok());
+        assert!(guard(&roots, &s(&root), true).is_ok());
+        assert!(guard(&roots, &s(&root), false).is_err(), "root itself is not deletable");
+        assert!(guard(&roots, &s(&other.join("secret")), true).is_err());
+        assert!(guard(&roots, &s(&root.join("..").join("other").join("secret")), true).is_err(), "`..` escape");
+        assert!(guard(&roots, &s(&root.join("missing")), true).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&other, root.join("link")).unwrap();
+            assert!(guard(&roots, &s(&root.join("link").join("secret")), true).is_err(), "symlink escape");
+        }
+        assert_eq!(tree_size(&base), 2);
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 
     #[test]
     fn parses_nvidia_smi_and_meminfo() {

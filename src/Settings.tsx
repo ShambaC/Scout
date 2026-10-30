@@ -1,19 +1,21 @@
-import { useEffect, useState } from "react";
-import { Check, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { open as pickFile } from "@tauri-apps/plugin-dialog";
 import { appPaths, extractArchive, gpuInfo, http, httpDownload, llama, network, openLoginWindow, secrets, type GpuInfo, type LlamaStatus } from "../packages/agent/src/rust";
 import { EZPROXY_PRESETS, saveSettings } from "../packages/agent/src/settings";
 import { PROVIDER_PRESETS } from "../packages/agent/src/providers/presets";
 import type { ProviderConfig, Settings as S, Tier } from "../packages/agent/src/types";
 import { applyTheme, dbq, fail, get, set, useStore } from "./store";
-import { CHAT_REPOS, EMBED_REPOS, budgetOf, pickQuant, type GgufFile } from "./localModels";
+import { CHAT_REPOS, EMBED_REPOS, budgetOf, gb, mb, pickQuant, type GgufFile } from "./localModels";
+import { patchLlamaUi, llamaUi, track, useDownloads } from "./downloads";
+import { Downloads, Models } from "./LocalFiles";
 import Logins from "./Logins";
 import { Badge, Button, Card, Confirm, Field, Input, Modal, Select, Toggle, cn } from "./ui";
 
 type Up = (f: (d: S) => void) => void;
 // embeddings need the whole input in one ubatch (default 512 tokens is smaller than a chunk)
 const EMBED_ARGS = ["--embedding", "-c", "2048", "-b", "2048", "-ub", "2048"];
-const SECTIONS = ["Providers", "Local models", "Experimental", "Tiers", "Budget", "Network", "Sources", "Appearance", "Pipeline"] as const;
+const SECTIONS = ["Providers", "Local models", "Models", "Downloads", "Experimental", "Tiers", "Budget", "Network", "Sources", "Appearance", "Pipeline"] as const;
 const TIERS: Tier[] = ["T0", "T1", "T2", "E"];
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) =>
@@ -95,8 +97,6 @@ const hfJson = async <T,>(path: string, auth: boolean) => {
   if (r.status >= 400) throw hfError(r.status);
   return JSON.parse(r.body) as T;
 };
-const mb = (n: number) => (n / 1048576).toFixed(0);
-const gb = (n: number) => (n / 1073741824).toFixed(1);
 // asset suffix per variant (the build number changes every release); `rt` = CUDA runtime archive extracted into the same folder
 const WIN = /windows/i.test(navigator.userAgent);
 const LLAMA_VARIANTS: Record<string, { label: string; suffix: string | RegExp; rt?: boolean }> = WIN
@@ -113,7 +113,9 @@ type Tree = { type: string; path: string; size: number }[];
 function Local() {
   const [cfg, setCfg] = useState({ binary: "", model: "", port: 8080, embedding: false }), [st, setSt] = useState<LlamaStatus | null>(null), [dir, setDir] = useState(""), [dataDir, setDataDir] = useState("");
   const [q, setQ] = useState(""), [repos, setRepos] = useState<{ id: string; downloads: number }[]>([]), [repo, setRepo] = useState("");
-  const [files, setFiles] = useState<{ path: string; size: number }[]>([]), [dl, setDl] = useState<{ name: string; got: number; total: number | null } | null>(null);
+  const [files, setFiles] = useState<{ path: string; size: number }[]>([]), dls = useDownloads();
+  const active = dls.filter((d) => d.state === "downloading").length, finished = dls.filter((d) => d.state === "done").length;
+  const qNow = useRef(""), repoNow = useRef(""); // drop search/tree replies that arrive after the box was cleared or the repo closed
   const [key, setKey] = useState(""), [hasKey, setHasKey] = useState(false), [who, setWho] = useState<{ tone: "success" | "danger" | "warning"; text: string } | null>(null);
   const [hw, setHw] = useState<GpuInfo | null>(null), [recs, setRecs] = useState<{ chat: Rec[]; embed: Rec | null } | null>(null), [busy, setBusy] = useState(false);
   const [releases, setReleases] = useState<Release[]>([]), [vsel, setVsel] = useState("");
@@ -127,6 +129,8 @@ function Local() {
       .then((r) => r.status === 200 && setReleases(JSON.parse(r.body))).catch(() => {});
     secrets.exists(HF_SECRET).then(setHasKey).catch(() => setHasKey(false));
   }, []);
+  // a download that finished (maybe while this section was closed) saved a new binary/model
+  useEffect(() => { llamaUi().then((r) => setCfg((c) => ({ ...c, binary: r.binary ?? c.binary, model: r.model ?? c.model }))).catch(() => {}); }, [finished]);
   const pick = async (k: "binary" | "model") => { const f = await pickFile({ multiple: false, defaultPath: k === "model" ? dir : undefined }).catch(fail); if (typeof f === "string") setCfg({ ...cfg, [k]: f }); };
   const save = (c: typeof cfg) => dbq("INSERT OR REPLACE INTO settings(key, value_json) VALUES ('llama_ui', ?)", [JSON.stringify(c)]);
   const start = async () => {
@@ -135,14 +139,20 @@ function Local() {
       setSt(await llama.start(cfg.binary, cfg.model, cfg.port, cfg.embedding ? EMBED_ARGS : []));
     } catch (e) { fail(e); }
   };
-  const search = (text: string) => {
+  const closeRepo = () => { repoNow.current = ""; setRepo(""); setFiles([]); };
+  const typeQ = (text: string) => {
     setQ(text);
-    hfJson<{ id: string; downloads: number }[]>(`/api/models?search=${encodeURIComponent(text)}&filter=gguf&sort=downloads&direction=-1&limit=20`, hasKey).then(setRepos).catch(fail);
+    if (!text.trim()) { qNow.current = ""; setRepos([]); closeRepo(); }
+  };
+  const search = (text: string) => {
+    setQ(text); qNow.current = text;
+    hfJson<{ id: string; downloads: number }[]>(`/api/models?search=${encodeURIComponent(text)}&filter=gguf&sort=downloads&direction=-1&limit=20`, hasKey).then((r) => qNow.current === text && setRepos(r)).catch(fail);
   };
   const openRepo = (id: string) => {
-    setRepo(id); setFiles([]);
+    if (id === repo) return closeRepo();
+    setRepo(id); setFiles([]); repoNow.current = id;
     hfJson<{ type: string; path: string; size: number }[]>(`/api/models/${id}/tree/main?recursive=1`, hasKey)
-      .then((t) => setFiles(t.filter((f) => f.type === "file" && f.path.endsWith(".gguf")))).catch(fail);
+      .then((t) => repoNow.current === id && setFiles(t.filter((f) => f.type === "file" && f.path.endsWith(".gguf")))).catch(fail);
   };
   const check = async () => {
     setWho(null);
@@ -176,28 +186,27 @@ function Local() {
       for (const a of [main, rt]) {
         if (!a) continue;
         const folder = `${dataDir}/llama.cpp/${rel.tag_name}`, save_path = `${folder}/${a.name}`;
-        setDl({ name: a.name, got: 0, total: a.size });
-        const r = await httpDownload({ url: a.browser_download_url, save_path }, (got, total) => setDl({ name: a.name, got, total: total ?? a.size }));
-        if (r.status >= 400) throw new Error(`GitHub returned HTTP ${r.status}`);
-        bin = (await extractArchive(save_path, folder)) ?? bin;
+        const r = await track({ name: a.name, source: `github.com/ggml-org/llama.cpp ${rel.tag_name}`, path: folder, total: a.size }, async (progress) => {
+          const r = await httpDownload({ url: a.browser_download_url, save_path }, progress);
+          if (r.status >= 400) throw new Error(`GitHub returned HTTP ${r.status}`);
+          return extractArchive(save_path, folder);
+        });
+        if (r === undefined) return; // track already reported it
+        bin = r ?? bin;
       }
       if (!bin) throw new Error("llama-server not found in the downloaded archive");
-      const next = { ...cfg, binary: bin };
-      setCfg(next);
-      await save(next);
-    } catch (e) { fail(e); } finally { setDl(null); }
+      await patchLlamaUi({ binary: bin });
+    } catch (e) { fail(e); }
   };
   // shortcut: sharded GGUFs (-0000N-of-0000M) download one shard at a time, pick the single-file quant or merge shards by hand
   const download = async (path: string, from = repo) => {
     const name = path.split("/").pop()!, save_path = `${dir}/${name}`;
-    setDl({ name, got: 0, total: null });
-    try {
-      const r = await httpDownload({ url: `${HF}/${from}/resolve/main/${encodeURI(path)}`, headers: hfHeaders(hasKey), save_path }, (got, total) => setDl({ name, got, total }));
+    const ok = await track({ name, source: `huggingface.co/${from}`, path: save_path }, async (progress) => {
+      const r = await httpDownload({ url: `${HF}/${from}/resolve/main/${encodeURI(path)}`, headers: hfHeaders(hasKey), save_path }, progress);
       if (r.status >= 400) throw hfError(r.status);
-      const next = { ...cfg, model: save_path };
-      setCfg(next);
-      await save(next);
-    } catch (e) { fail(e); } finally { setDl(null); }
+      return true;
+    });
+    if (ok) await patchLlamaUi({ model: save_path }).catch(fail);
   };
   return <div className="space-y-3">
     <p className="text-sm text-muted">Run a GGUF model with llama.cpp's <code className="font-mono">llama-server</code>. Point a <code className="font-mono">llama_local</code> provider at <code className="font-mono">http://127.0.0.1:{cfg.port}/v1</code>.</p>
@@ -206,7 +215,7 @@ function Local() {
     <div className="flex flex-wrap items-center gap-2">
       <Select aria-label="llama-server build" className="w-56" value={vk} onChange={(e) => setVsel(e.target.value)}>
         {Object.entries(LLAMA_VARIANTS).map(([k, v]) => { const a = releases.map((r) => findAsset(r, v.suffix, "llama-")).find(Boolean); return <option key={k} value={k}>{v.label}{a ? ` (${mb(a.size)} MB)` : ""}</option>; })}</Select>
-      <Button disabled={!dataDir || !releases.length || !!dl} onClick={getServer}>Download llama-server</Button>
+      <Button disabled={!dataDir || !releases.length} onClick={getServer}>Download llama-server</Button>
       <span className="text-xs text-muted">{releases.length ? "from ggml-org/llama.cpp releases" : "looking up latest llama.cpp build..."}</span></div>
     <Card className="space-y-2 p-3">
       <div className="text-sm font-medium">Download a model from Hugging Face</div>
@@ -224,21 +233,21 @@ function Local() {
         {recs && [...recs.chat, ...(recs.embed ? [recs.embed] : [])].map((r) => <div key={r.repo} className="flex items-center gap-2 text-sm">
           <span className="min-w-0 flex-1 truncate font-mono text-xs" title={`${r.repo}/${r.file.path}`}>{r.repo}<span className="text-muted"> / {r.file.path}</span></span>
           {EMBED_REPOS.includes(r.repo) && <Badge tone="accent">embedding</Badge>}<span className="text-xs text-muted">{gb(r.file.size)} GB</span>
-          <Button size="sm" aria-label={`Download ${r.file.path}`} disabled={!dir || !!dl} onClick={() => download(r.file.path, r.repo)}>Download</Button></div>)}
+          <Button size="sm" aria-label={`Download ${r.file.path}`} disabled={!dir} onClick={() => download(r.file.path, r.repo)}>Download</Button></div>)}
         {recs && !recs.chat.length && <p className="text-xs text-muted">Nothing in the curated list fits this budget.</p>}
         {recs?.embed && <p className="text-xs text-muted">Embedding models need Embedding mode below.</p>}</div>
-      <div className="flex flex-wrap gap-2"><Input aria-label="Search Hugging Face" placeholder="search GGUF models" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && q.trim() && search(q.trim())} />
+      <div className="flex flex-wrap gap-2"><Input aria-label="Search Hugging Face" placeholder="search GGUF models" value={q} onChange={(e) => typeQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && q.trim() && search(q.trim())} />
         <Button disabled={!q.trim()} onClick={() => search(q.trim())}>Search</Button>
         {PICKS.map(([label, text]) => <Button key={text} size="sm" onClick={() => search(text)}>{label}</Button>)}</div>
-      {repos.map((r) => <button key={r.id} type="button" className={cn("flex w-full justify-between rounded px-2 py-1 text-left text-sm hover:bg-border", r.id === repo && "bg-border")} onClick={() => openRepo(r.id)}>
-        <span className="truncate font-mono text-xs">{r.id}</span><span className="text-xs text-muted">{r.downloads.toLocaleString()} downloads</span></button>)}
-      {repo && <div className="space-y-1 border-t border-border pt-2">
-        {files.map((f) => <div key={f.path} className="flex items-center gap-2 text-sm"><span className="flex-1 truncate font-mono text-xs">{f.path}</span><span className="text-xs text-muted">{mb(f.size)} MB</span>
-          <Button size="sm" disabled={!dir || !!dl} onClick={() => download(f.path)}>Download</Button></div>)}
-        {!files.length && <p className="text-xs text-muted">No .gguf files listed (or still loading).</p>}</div>}
-      {dl && <div className="space-y-1"><div className="h-1.5 overflow-hidden rounded-full bg-border" role="progressbar" aria-label={`Downloading ${dl.name}`} aria-valuenow={dl.total ? Math.round((dl.got / dl.total) * 100) : undefined} aria-valuemin={0} aria-valuemax={100}>
-        <div className="h-full bg-accent" style={{ width: dl.total ? (dl.got / dl.total) * 100 + "%" : "100%" }} /></div>
-        <div className="text-xs text-muted">{dl.name}: {mb(dl.got)}{dl.total ? ` / ${mb(dl.total)}` : ""} MB</div></div>}
+      {repos.map((r) => <div key={r.id}>
+        <button type="button" aria-expanded={r.id === repo} className={cn("flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-border", r.id === repo && "bg-border")} onClick={() => openRepo(r.id)}>
+          {r.id === repo ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+          <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.id}>{r.id}</span><span className="shrink-0 text-xs text-muted">{r.downloads.toLocaleString()} downloads</span></button>
+        {r.id === repo && <div className="ml-4 space-y-1 border-l border-border py-1 pl-3">
+          {files.map((f) => <div key={f.path} className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate font-mono text-xs" title={f.path}>{f.path}</span><span className="shrink-0 text-xs text-muted">{mb(f.size)} MB</span>
+            <Button size="sm" aria-label={`Download ${f.path}`} disabled={!dir} onClick={() => download(f.path)}>Download</Button></div>)}
+          {!files.length && <p className="text-xs text-muted">No .gguf files listed (or still loading).</p>}</div>}</div>)}
+      {active > 0 && <p role="status" className="text-xs text-muted">{active} downloading, see Downloads</p>}
     </Card>
     <Field label="Port"><Num label="Port" value={cfg.port} onChange={(n) => setCfg({ ...cfg, port: n })} /></Field>
     <Row label="Embedding mode (--embedding, for embedding models)"><Toggle label="Embedding mode" checked={cfg.embedding} onChange={(v) => setCfg({ ...cfg, embedding: v })} /></Row>
@@ -268,14 +277,27 @@ function Experimental({ d, up }: { d: S; up: Up }) {
   </div>;
 }
 
+/** Known models as a real dropdown (a datalist only suggests after typing), with "Other" for a free-form id. */
+function ModelPick({ known, value, label, onChange }: { known: string[]; value: string; label: string; onChange: (m: string) => void }) {
+  const [other, setOther] = useState(false), custom = other || !known.length || (!!value && !known.includes(value));
+  return <div className="flex min-w-0 flex-1 gap-2">
+    {known.length > 0 && <Select aria-label={label} className="min-w-0 flex-1" value={custom ? "\0other" : value}
+      onChange={(e) => { const v = e.target.value; setOther(v === "\0other"); if (v !== "\0other") onChange(v); }}>
+      {!value && !custom && <option value="">Choose a model</option>}
+      {known.map((m) => <option key={m} value={m}>{m}</option>)}<option value={"\0other"}>Other model id...</option></Select>}
+    {custom && <Input aria-label={`${label} id`} className="min-w-0 flex-1" placeholder="model id" value={value} onChange={(e) => onChange(e.target.value)} />}
+  </div>;
+}
+
 function Tiers({ d, up }: { d: S; up: Up }) {
+  const known = (pid: string) => Object.keys(d.providers.find((p) => p.id === pid)?.prices ?? {});
   return <div className="space-y-4">{TIERS.map((t) => <div key={t} className="space-y-1.5">
     <div className="text-sm font-medium"><span className="font-mono text-accent">{t}</span> {{ T0: "Orchestrator", T1: "Worker", T2: "Bulk", E: "Embedder" }[t]}</div>
     {d.tiers[t].map((tg, i) => <div key={i} className="flex gap-2">
-      <Select aria-label={`${t} provider ${i + 1}`} className="w-48" value={tg.provider_id} onChange={(e) => up((x) => { x.tiers[t][i].provider_id = e.target.value; })}>
+      <Select aria-label={`${t} provider ${i + 1}`} className="w-48 shrink-0" value={tg.provider_id}
+        onChange={(e) => up((x) => { x.tiers[t][i] = { provider_id: e.target.value, model: known(e.target.value)[0] ?? "" }; })}>
         {d.providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</Select>
-      <Input aria-label={`${t} model ${i + 1}`} list={`m-${tg.provider_id}`} placeholder="model id" value={tg.model} onChange={(e) => up((x) => { x.tiers[t][i].model = e.target.value; })} />
-      <datalist id={`m-${tg.provider_id}`}>{Object.keys(d.providers.find((p) => p.id === tg.provider_id)?.prices ?? {}).map((m) => <option key={m} value={m} />)}</datalist>
+      <ModelPick key={tg.provider_id} known={known(tg.provider_id)} value={tg.model} label={`${t} model ${i + 1}`} onChange={(m) => up((x) => { x.tiers[t][i].model = m; })} />
       <Button variant="ghost" size="icon" aria-label={`Remove ${t} target ${i + 1}`} onClick={() => up((x) => { x.tiers[t].splice(i, 1); })}><Trash2 size={14} /></Button></div>)}
     <Button size="sm" disabled={!d.providers.length} onClick={() => up((x) => { x.tiers[t].push({ provider_id: x.providers[0].id, model: "" }); })}><Plus size={13} />Add to pool</Button>
   </div>)}</div>;
@@ -368,7 +390,7 @@ function Sources({ d, up }: { d: S; up: Up }) {
       <Toggle label={k} checked={d.sources[k]} onChange={(v) => up((x) => { x.sources[k] = v; })} /></Row>)}
     <Field label="Contact email" hint="Sent in the User-Agent for API etiquette (arXiv, OpenAlex, Crossref, Unpaywall).">
       <Input type="email" value={d.sources.contact_email} onChange={(e) => up((x) => { x.sources.contact_email = e.target.value; x.network.user_agent_contact = e.target.value; })} /></Field>
-    <Field label="Semantic Scholar API key (optional)"><div className="flex items-center gap-2"><Input type="password" autoComplete="off" placeholder={saved ? "replace key" : "paste key"} value={key} onChange={(e) => setKey(e.target.value)} />
+    <Field label="Semantic Scholar API key (recommended)" hint="Without a key, Semantic Scholar shares one small anonymous quota among everyone and often answers HTTP 429. Request a free key with the form at https://www.semanticscholar.org/product/api#api-key-form; it arrives by email. Stored in the OS keychain and sent as x-api-key."><div className="flex items-center gap-2"><Input type="password" autoComplete="off" placeholder={saved ? "replace key" : "paste key"} value={key} onChange={(e) => setKey(e.target.value)} />
       <Button disabled={!key} onClick={() => secrets.set(name, key).then(() => { setKey(""); setSaved(true); up((x) => { x.sources.s2_secret_name = name; }); }).catch(fail)}>Save key</Button>
       {saved && <Badge tone="success"><Check size={11} />saved</Badge>}</div></Field>
   </div>;
@@ -389,6 +411,8 @@ export default function Settings() {
       <div className="min-w-0 flex-1">
         {sec === "Providers" && <><Providers d={d} up={up} /><Logins d={d} up={up} /></>}
         {sec === "Local models" && <Local />}
+        {sec === "Models" && <Models />}
+        {sec === "Downloads" && <Downloads />}
         {sec === "Experimental" && <Experimental d={d} up={up} />}
         {sec === "Tiers" && <Tiers d={d} up={up} />}
         {sec === "Budget" && <div className="space-y-1">

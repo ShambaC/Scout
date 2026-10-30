@@ -3,7 +3,7 @@ import { adapters, canonicalId, dedupe, mergePapers, normArxiv, normDoi } from "
 import { db, type Row } from "../rust";
 import type { Paper, RunCtx, Settings } from "../types";
 import { loadBrief } from "./scoping";
-import { checkAbort, json, now, stageRun } from "./util";
+import { checkAbort, json, now, rateLimitNote, stageRun } from "./util";
 
 export function rowToPaper(r: Row): Paper {
   return {
@@ -90,7 +90,11 @@ export async function runRetrieval(ctx: RunCtx): Promise<void> {
       for (const q of queries) {
         checkAbort(ctx);
         try { const ps = await src.search(q, opts); counts[src.id] += ps.length; found.push(...ps); }
-        catch (e) { card.detail(`${src.id} failed for "${q}": ${(e as Error).message}`); }
+        catch (e) {
+          // a 429 here already survived the HTTP layer's retries, so the rest of this source's queries would fail too
+          if (/HTTP 429/.test((e as Error).message)) { card.detail(rateLimitNote(src.id)); break; }
+          card.detail(`${src.id} failed for "${q}": ${(e as Error).message}`);
+        }
         card.title(`Searching literature (${++done} searches)`);
       }
     }));

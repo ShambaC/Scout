@@ -68,3 +68,7 @@ export const json = <T>(s: string | null | undefined, fallback: T): T => {
 };
 
 export const checkAbort = (ctx: RunCtx) => { if (ctx.signal.aborted) throw new Error("Stopped by user"); };
+
+/** One card line for a source that keeps answering HTTP 429, instead of one line per request. */
+export const rateLimitNote = (src: string) => `${src} is rate-limiting requests (HTTP 429), so it was skipped for the rest of this step.` +
+  (src === "s2" ? " Semantic Scholar's shared anonymous quota is often exhausted; add a free API key in Settings > Sources." : "");

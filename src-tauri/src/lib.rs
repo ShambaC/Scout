@@ -54,6 +54,8 @@ pub fn run() {
       sys::open_login_window,
       sys::gpu_info,
       sys::extract_archive,
+      sys::list_dir,
+      sys::delete_path,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

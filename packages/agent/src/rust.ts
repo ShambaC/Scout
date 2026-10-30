@@ -118,6 +118,11 @@ export const gpuInfo = () => invoke<GpuInfo>("gpu_info");
 /** Unpacks a .zip/.tar.gz with the OS tar and deletes the archive. Returns the llama-server binary path if the archive held one. */
 export const extractArchive = (archive: string, dest: string) => invoke<string | null>("extract_archive", { archive, dest });
 
+export interface DirEntry { name: string; path: string; is_dir: boolean; size: number; modified_ms: number }
+/** Both only accept paths inside the models folder or `<data_dir>/llama.cpp` (Rust canonicalizes and rejects anything else). A folder's size is the total of its files. */
+export const listDir = (path: string) => invoke<DirEntry[]>("list_dir", { path });
+export const deletePath = (path: string) => invoke<void>("delete_path", { path });
+
 /** "Sign in with ChatGPT" (Rust owns the tokens; see src-tauri/src/oauth.rs). */
 export type OAuthProviderId = "openai-codex";
 export type OAuthEvent = { kind: "browser"; url: string };

@@ -85,6 +85,8 @@ export async function loadSessions(pid: string) {
   set({ sessions: { ...state.sessions, [pid]: rows }, status });
 }
 export function openSession(projectId: string, sessionId?: string) {
+  // re-opening the active session must not clear items: watchThread only reloads when the ids change
+  if (projectId === state.projectId && sessionId === state.sessionId) return;
   lsSet("projectId", projectId); lsSet("sessionId", sessionId ?? "");
   set({ projectId, sessionId, items: [], selected: null, usage: null });
 }

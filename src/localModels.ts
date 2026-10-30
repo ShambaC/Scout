@@ -2,6 +2,9 @@ import type { GpuInfo } from "../packages/agent/src/rust";
 
 export type GgufFile = { path: string; size: number };
 const GB = 1073741824;
+export const mb = (n: number) => (n / 1048576).toFixed(0);
+export const gb = (n: number) => (n / GB).toFixed(1);
+export const sizeOf = (n: number) => (n >= GB ? `${gb(n)} GB` : `${mb(n)} MB`);
 export const CHAT_REPOS = ["unsloth/Qwen3.5-4B-GGUF", "unsloth/gemma-4-E4B-it-GGUF", "unsloth/Qwen3.5-9B-GGUF", "unsloth/gemma-4-12b-it-GGUF", "unsloth/gemma-4-26B-A4B-it-GGUF", "unsloth/Qwen3.8-27B-GGUF", "unsloth/gemma-4-31B-it-GGUF"];
 export const EMBED_REPOS = ["ggml-org/embeddinggemma-300M-GGUF", "Qwen/Qwen3-Embedding-0.6B-GGUF"];
 
